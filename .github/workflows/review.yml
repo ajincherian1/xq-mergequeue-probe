@@ -1,0 +1,31 @@
+name: review
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+permissions:
+  contents: read
+  checks: write
+  actions: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    environment: probe          # main-restricted; holds the dummy secret
+    steps:
+      - name: prove context + env + post probe-gate on the workflow_run head sha
+        env:
+          DUMMY: ${{ secrets.PROBE_DUMMY }}
+          GH_TOKEN: ${{ github.token }}
+          WR_EVENT: ${{ github.event.workflow_run.event }}
+          WR_HEAD: ${{ github.event.workflow_run.head_sha }}
+          WR_ID: ${{ github.event.workflow_run.id }}
+          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          echo "REVIEW_FIRED wr_event=$WR_EVENT wr_head=$WR_HEAD wr_id=$WR_ID wr_branch=$WR_BRANCH this_ref=${{ github.ref }}"
+          echo "ENV_SECRET_PRESENT=$([ -n "$DUMMY" ] && echo yes || echo no)"
+          # mirror review.py: success for pull_request ci (so PR can queue), FAILURE for merge_group ci (so queue blocks)
+          if [ "$WR_EVENT" = "merge_group" ]; then CONCL=failure; else CONCL=success; fi
+          echo "POSTING probe-gate concl=$CONCL on $WR_HEAD"
+          gh api -X POST "repos/${{ github.repository }}/check-runs" -f name=probe-gate -f head_sha="$WR_HEAD" \
+            -f status=completed -f conclusion="$CONCL" -f 'output[title]=probe-gate' \
+            -f "output[summary]=event=$WR_EVENT wr_id=$WR_ID this_ref=${{ github.ref }} env=$([ -n "$DUMMY" ] && echo yes || echo no)"
